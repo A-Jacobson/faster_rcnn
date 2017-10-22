@@ -1,14 +1,20 @@
-# faster_rcnn
+# Faster RCNN pytorch
 [WIP] Faster RCNN pytorch
 
 - [x] Load VOC
 - [x] bbox scaling
 - [x] bbox plotting
 - [x] VGG features
-- [ ] Anchor generation
-- [ ] RPN
-- [ ] Roi Pooling
-- [ ] Non maximum suppression
+- [x] Anchor generation
+- [x] RPN
+- [x] Roi Pooling
+- [x] Non maximum suppression
+- [x] Time distributed classifier
+- [ ] RPN loss
+- [ ] Backward pass
+- [ ] Data Augmentation
+- [ ] Train on VOC
+- [ ] Evaluate Results
 
 
 ## resources
