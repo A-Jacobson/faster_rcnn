@@ -1,5 +1,6 @@
 import os
 
+from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 from PIL import Image
 from utils import scale_bbs
@@ -17,12 +18,12 @@ class PascalVOC(Dataset):
     """
 
     def __init__(self, root, annFile, transform=None):
-        from pycocotools.coco import COCO
         self.root = root
         self.coco = COCO(annFile)
         self.ids = list(self.coco.imgs.keys())
         self.transform = transform
-        self.classes = {1: 'aeroplane',
+        self.classes = {0: 'background',
+                        1: 'aeroplane',
                         2: 'bicycle',
                         3: 'bird',
                         4: 'boat',
@@ -41,8 +42,7 @@ class PascalVOC(Dataset):
                         17: 'sheep',
                         18: 'sofa',
                         19: 'train',
-                        20: 'tvmonitor',
-                        21: 'ignore'}
+                        20: 'tvmonitor'}
 
     def __getitem__(self, index):
         """
@@ -58,10 +58,10 @@ class PascalVOC(Dataset):
         path = coco.loadImgs(img_id)[0]['file_name']
 
         img = Image.open(os.path.join(self.root, path)).convert('RGB')
-        w = img.size[0]
-        h = img.size[1]
-        target[0]['w'] = w
-        target[0]['h'] = h
+        width = img.size[0]
+        height = img.size[1]
+        target[0]['width'] = width
+        target[0]['height'] = height
         if self.transform is not None:
             img = self.transform(img)
             target = scale_bbs(img, target)

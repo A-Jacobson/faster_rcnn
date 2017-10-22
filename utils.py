@@ -21,8 +21,8 @@ def scale_bbs(img, target):
     scaled_target = copy.deepcopy(target)
     h_2 = img.size(1)
     w_2 = img.size(2)
-    scale_x = w_2 / target[0]['w']
-    scale_y = h_2 / target[0]['h']
+    scale_x = w_2 / target[0]['width']
+    scale_y = h_2 / target[0]['height']
     for t in scaled_target:
         t['bbox'][0] = int(t['bbox'][0] * scale_x)
         t['bbox'][1] = int(t['bbox'][1] * scale_y)
