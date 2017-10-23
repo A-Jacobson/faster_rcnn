@@ -10,10 +10,10 @@
 - [x] Roi Pooling
 - [x] Non maximum suppression
 - [x] Time distributed classifier
-- [ ] RPN loss
-- [ ] Backward pass
+- [x] RPN loss
+- [x] Backward pass
 - [ ] Data Augmentation
-- [ ] Train on VOC
+- [ ] Train on VOC (in progress)
 - [ ] Evaluate Results
 
 
