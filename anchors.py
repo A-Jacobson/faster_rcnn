@@ -25,6 +25,26 @@ import numpy as np
 #       -79  -167    96   184
 #      -167  -343   184   360
 
+# def get_anchors(self, image_features):
+#     height, width = image_features.size()[-2:]
+#     # 1. Generate proposals from bbox deltas and shifted anchors
+#     shift_x = np.arange(0, width) * self.feat_stride
+#     shift_y = np.arange(0, height) * self.feat_stride
+#     shift_x, shift_y = np.meshgrid(shift_x, shift_y)
+#     shifts = np.vstack((shift_x.ravel(), shift_y.ravel(),
+#                         shift_x.ravel(), shift_y.ravel())).transpose()
+#     # add A anchors (1, A, 4) to
+#     # cell K shifts (K, 1, 4) to get
+#     # shift anchors (K, A, 4)
+#     # reshape to (K*A, 4) shifted anchors
+#     A = self._num_anchors
+#     K = shifts.shape[0]
+#     all_anchors = (self._anchors.reshape((1, A, 4)) +
+#                    shifts.reshape((1, K, 4)).transpose((1, 0, 2)))
+#     all_anchors = all_anchors.reshape((K * A, 4))
+#     return all_anchors
+
+
 def generate_anchors(base_size=16, ratios=[0.5, 1, 2],
                      scales=(8, 16, 32)):
     """

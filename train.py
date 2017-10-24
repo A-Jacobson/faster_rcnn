@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from criterion import RPNLoss, FRCNNLoss
 from datasets import PascalVOC
-from models import Base_CNN, RegionProposalNetwork, FRCNN
+from models import Base_CNN, RegionProposalNetwork, Classifier
 from torch.nn.utils import clip_grad_norm
 
 
@@ -19,12 +19,12 @@ voc = PascalVOC(root=path + 'JPEGImages', annFile=path + "pascal_train2007.json"
 loader = DataLoader(voc)
 base_cnn = Base_CNN()
 rpn = RegionProposalNetwork()
-frcnn = FRCNN()
+classifier = Classifier()
 
 base_cnn.cuda()
 rpn.cuda()
-frcnn.cuda()
-optimizer = Adam([dict(params=rpn.parameters()), dict(params=frcnn.parameters())], lr=1e-3)
+classifier.cuda()
+optimizer = Adam([dict(params=rpn.parameters()), dict(params=classifier.parameters())], lr=1e-3)
 
 criterion = RPNLoss()
 criterion2 = FRCNNLoss()
@@ -41,15 +41,15 @@ for img, target in pbar:
     labels, bbox_targets = rpn.get_rpn_targets(target, img)
     rpn_loss = criterion(rpn_cls_prob, rpn_bbox_pred, Variable(labels).cuda(), Variable(bbox_targets).cuda())
 
-    frcnn_labels, roi_boxes, frcnn_bbox_targets = frcnn.get_frcnn_targets(roi_boxes, target, test=False)
+    frcnn_labels, roi_boxes, frcnn_bbox_targets = classifier.get_frcnn_targets(roi_boxes, target, test=False)
     if roi_boxes.shape[0] == 0:
         continue
-    cls_pred, bb_pred = frcnn(img_features, roi_boxes)
+    cls_pred, bb_pred = classifier(img_features, roi_boxes)
     frcnn_loss = criterion2(cls_pred, bb_pred, Variable(frcnn_labels).cuda(), Variable(frcnn_bbox_targets).cuda())
     total_loss = rpn_loss + frcnn_loss
     pbar.set_description(desc='rpn_loss {} | frcnn_loss {}'.format(rpn_loss.data[0], frcnn_loss.data[0]))
     total_loss.backward()
     rpn_norm = clip_grad_norm(rpn.parameters(), 10.)
-    frcnn_norm = clip_grad_norm(frcnn.parameters(), 10.)
+    frcnn_norm = clip_grad_norm(classifier.parameters(), 10.)
     optimizer.step()
 

@@ -3,20 +3,21 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torchvision.models import vgg16_bn
+from torch.autograd import Variable
 
+from anchors import generate_anchors
 from bbox_utils import (bbox_transform_inv, bbox_overlaps,
                         bbox_transform, unmap, clip_boxes, filter_boxes, non_max_suppression)
-from generate_anchors import generate_anchors
 from utils import boxes_to_numpy, get_output_dim, classes_to_numpy
 
 
 class Base_CNN(nn.Module):
     # TODO: ADD RESNET OPTION
-    def __init__(self):
+    def __init__(self, requires_grad=False):
         super(Base_CNN, self).__init__()
         vgg_full = vgg16_bn(pretrained=True)
         for param in vgg_full.parameters():
-            param.requires_grad = False
+            param.requires_grad = requires_grad
         self.vggfeats = nn.Sequential(*list(vgg_full.features.children())[:-1])  # drop last pooling layer
 
     def forward(self, x):
@@ -57,7 +58,7 @@ class RegionProposalNetwork(nn.Module):
         self.all_anchor_boxes = None
 
     def forward(self, image_features):
-        self.all_anchor_boxes = self.rpn_get_anchors(image_features)
+        self.all_anchor_boxes = self.get_anchors(image_features)
         conv1 = F.relu(self.rpn_conv1(image_features), True)
         rpn_cls_probs = self.conv_classify(conv1)  # (N, C, H, W)
         rpn_bbox_preds = self.conv_bbox_regr(conv1)  # (N, C, H, W)
@@ -67,7 +68,7 @@ class RegionProposalNetwork(nn.Module):
         rpn_bbox_preds = rpn_bbox_preds.permute(0, 2, 3, 1).contiguous().view(-1, 4)
         return rpn_cls_probs, rpn_bbox_preds
 
-    def rpn_get_anchors(self, image_features):
+    def get_anchors(self, image_features):
         height, width = image_features.size()[-2:]
         # 1. Generate proposals from bbox deltas and shifted anchors
         shift_x = np.arange(0, width) * self.feat_stride
@@ -237,7 +238,6 @@ class RegionProposalNetwork(nn.Module):
         proposals_boxes = clip_boxes(proposals_boxes, (height, width))
 
         # 3. remove predicted boxes with either height or width < threshold
-        # (NOTE: convert min_size to input image scale stored in im_info[3])
         filter_indices = filter_boxes(proposals_boxes, 10 * max(target[0]['scale'][0]))
 
         # delete filter_indices
@@ -286,20 +286,18 @@ class ROIPooling(nn.Module):
         return torch.cat(output, 0)
 
 
-class FRCNN(nn.Module):
+class Classifier(nn.Module):
     def __init__(self, batch_size=128, fg_fraction=0.25,
                  fg_threshold=0.5, bg_threshold=None,
                  num_classes=21):
-        super(FRCNN, self).__init__()
-        self.roi_pool = ROIPooling()
+        super(Classifier, self).__init__()
         self.dropout = nn.Dropout(0.5)
         self.fc1 = nn.Linear(512 * 7 * 7, 4096)
         self.fc2 = nn.Linear(4096, 4096)
         self.out_class = nn.Linear(4096, 21)
         self.out_regr = nn.Linear(4096, 4 * 21)
 
-    def forward(self, img_features, roi_boxes):
-        roi_pools = self.roi_pool(img_features, roi_boxes)
+    def forward(self, roi_pools):
         x = roi_pools.view(roi_pools.size(0), -1)
         x = F.relu(self.fc1(x), True)
         x = self.dropout(x)
@@ -309,7 +307,7 @@ class FRCNN(nn.Module):
         out_regr = self.out_regr(x)
         return out_class, out_regr
 
-    def get_frcnn_targets(self, roi_boxes, targets, test):
+    def get_targets(self, roi_boxes, targets, test):
         """
         Arguments:
             prop_boxes (Tensor) : (# proposal boxes , 4)
@@ -364,7 +362,7 @@ class FRCNN(nn.Module):
             fg_indices = np.random.choice(fg_indices, size=fg_rois_per_this_image)
 
         if not test:
-            bg_indices = np.where((max_overlaps < bg_threshold[1]) &
+                bg_indices = np.where((max_overlaps < bg_threshold[1]) &
                                   (max_overlaps >= bg_threshold[0]))[0]
         else:
             bg_indices = np.where((max_overlaps < bg_threshold[1]) &
@@ -381,7 +379,6 @@ class FRCNN(nn.Module):
         labels = labels[keep_inds]
         roi_boxes_c = all_boxes_c[keep_inds]
 
-        # background에 해당하는 label을 0으로 만들어준다
         labels[fg_rois_per_this_image:] = 0
 
         delta_boxes = bbox_transform(roi_boxes_c, target_bbs[gt_assignment[keep_inds], :])
@@ -400,3 +397,57 @@ class FRCNN(nn.Module):
         if len(labels) > 0:
             return torch.Tensor(labels).long().squeeze(), roi_boxes_c, torch.Tensor(bbox_targets)
         return labels, roi_boxes_c, bbox_targets
+
+
+class FasterRCNN(nn.Module):
+    def __init__(self, base_cnn, rpn, roi_pool, classifier, test=False):
+        super(FasterRCNN, self).__init__()
+        self.base_cnn = base_cnn
+        self.rpn = rpn
+        self.roi_pool = roi_pool
+        self.classifier = classifier
+
+        # config
+        self.test = test
+
+        # targets
+        self.rpn_labels = None
+        self.rpn_bbox_targets = None
+        self.classifier_labels = None
+        self.classifier_bbox_targets = None
+        self.sampled_roi_boxes = None
+
+    def get_rpn_targets(self):
+        return self.rpn_labels, self.rpn_bbox_targets
+
+    def get_classifier_targets(self):
+        return self.classifier_labels, self.classifier_bbox_targets
+
+    def get_roi_boxes(self):
+        return self.sampled_roi_boxes
+
+    def forward(self, img, targets):
+        """
+        :param img:
+        :param targets: need targets dicts to calc boxes
+        :return:
+        """
+        img_features = self.base_cnn(img)
+        # localization
+        rpn_cls_scores, rpn_bbox_deltas = self.rpn(img_features)
+        roi_boxes, objectness_scores = self.rpn.get_roi_boxes(rpn_bbox_deltas,
+                                                              rpn_cls_scores,
+                                                              img, targets, self.test)
+
+        # get targets rpn
+        self.rpn_labels, self.rpn_bbox_targets = self.rpn.get_rpn_targets(targets, img)
+        self.classifier_labels, self.sampled_roi_boxes, self.classifier_bbox_targets = \
+            self.classifier.get_targets(roi_boxes, targets, self.test)
+
+        skip = False
+        if self.sampled_roi_boxes.shape[0] == 0:
+            return None, None, None, None, True
+
+        roi_pools = self.roi_pool(img_features, self.sampled_roi_boxes)
+        out_class, out_bbox_deltas = self.classifier(roi_pools)
+        return rpn_cls_scores, rpn_bbox_deltas, out_class, out_bbox_deltas, skip

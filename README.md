@@ -12,6 +12,9 @@
 - [x] Time distributed classifier
 - [x] RPN loss
 - [x] Backward pass
+- [x] refactor frcnn into one object
+- [ ] remove label dependency to generate boxes
+- [ ] generated target bboxes are mostly zero?
 - [ ] Data Augmentation
 - [ ] Train on VOC (in progress)
 - [ ] Evaluate Results
