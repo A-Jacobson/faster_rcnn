@@ -25,34 +25,18 @@ import numpy as np
 #       -79  -167    96   184
 #      -167  -343   184   360
 
-# def get_anchors(self, image_features):
-#     height, width = image_features.size()[-2:]
-#     # 1. Generate proposals from bbox deltas and shifted anchors
-#     shift_x = np.arange(0, width) * self.feat_stride
-#     shift_y = np.arange(0, height) * self.feat_stride
-#     shift_x, shift_y = np.meshgrid(shift_x, shift_y)
-#     shifts = np.vstack((shift_x.ravel(), shift_y.ravel(),
-#                         shift_x.ravel(), shift_y.ravel())).transpose()
-#     # add A anchors (1, A, 4) to
-#     # cell K shifts (K, 1, 4) to get
-#     # shift anchors (K, A, 4)
-#     # reshape to (K*A, 4) shifted anchors
-#     A = self._num_anchors
-#     K = shifts.shape[0]
-#     all_anchors = (self._anchors.reshape((1, A, 4)) +
-#                    shifts.reshape((1, K, 4)).transpose((1, 0, 2)))
-#     all_anchors = all_anchors.reshape((K * A, 4))
-#     return all_anchors
-
-
-def generate_anchors(base_size=16, ratios=[0.5, 1, 2],
-                     scales=(8, 16, 32)):
+def generate_anchors(feat_stride=16, ratios=[0.5, 1, 2],
+                     scales=(128, 256, 512)):
     """
+    stride: of the feature map relative to the image ex:
+    K * 4 array ((ratios*scales), x1, y1, x2, y2)
     Generate anchor (reference) windows by enumerating aspect ratios X
     scales wrt a reference (0, 0, 15, 15) window.
+    ratios: aspect ratios of the windows
+    scales: area of generated bboxes in the original image
     """
-
-    base_anchor = np.array([1, 1, base_size, base_size]) - 1
+    scales = np.array(scales) / feat_stride
+    base_anchor = np.array([1, 1, feat_stride, feat_stride])
     ratio_anchors = _ratio_enum(base_anchor, ratios)
     anchors = np.vstack([_scale_enum(ratio_anchors[i, :], scales)
                          for i in range(ratio_anchors.shape[0])])
@@ -93,7 +77,7 @@ def _ratio_enum(anchor, ratios):
 
     w, h, x_ctr, y_ctr = _whctrs(anchor)
     size = w * h
-    size_ratios = size / ratios
+    size_ratios = size // ratios
     ws = np.round(np.sqrt(size_ratios))
     hs = np.round(ws * ratios)
     anchors = _mkanchors(ws, hs, x_ctr, y_ctr)
