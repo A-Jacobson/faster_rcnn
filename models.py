@@ -29,7 +29,7 @@ class BaseCNN(nn.Module):
 class RegionProposalNetwork(nn.Module):
     def __init__(self, anchor_scales=(8, 16, 32), feat_stride=16,
                  negative_overlap=0.3, positive_overlap=0.7,
-                 fg_fraction=0.5, batch_size=256,
+                 fg_fraction=0.5, batch_size=128,
                  nms_thresh=0.7, pre_nms_limit=6000,
                  post_nms_limit=2000):
         super(RegionProposalNetwork, self).__init__()
@@ -233,9 +233,9 @@ class Classifier(nn.Module):
         self.roi_pool = ROIPooling()
         self.dropout = nn.Dropout(0.5)
         self.fc1 = nn.Linear(512 * 7 * 7, 4096)
-        self.fc2 = nn.Linear(4096, 4096)
-        self.out_class = nn.Linear(4096, num_classes)
-        self.out_regr = nn.Linear(4096, 4 * num_classes)
+        self.fc2 = nn.Linear(4096, 2048)
+        self.out_class = nn.Linear(2048, num_classes)
+        self.out_regr = nn.Linear(2048, 4 * num_classes)
 
     def forward(self, img_features, proposal_boxes):
         roi_pools = self.roi_pool(img_features, proposal_boxes)
@@ -246,7 +246,7 @@ class Classifier(nn.Module):
         x = self.dropout(x)
         pred_label = self.out_class(x)
         pred_bbox_deltas = self.out_regr(x)
-        pred_bbox_deltas = pred_bbox_deltas.contiguous().view(-1, self.num_classes, 4)
+        pred_bbox_deltas = pred_bbox_deltas.view(-1, self.num_classes, 4)
         return pred_label, pred_bbox_deltas
 
     def foreground_sample(self, proposal_boxes, targets):

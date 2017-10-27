@@ -9,12 +9,11 @@
 - [x] RPN
 - [x] Roi Pooling
 - [x] Non maximum suppression
-- [x] Time distributed classifier
 - [x] RPN loss
 - [x] Backward pass
 - [x] refactor frcnn into one object
-- [ ] remove label dependency to generate boxes
-- [ ] generated target bboxes are mostly zero?
+- [x] remove label dependency to generate boxes
+- [ ] Resnet Features (memory savings?)
 - [ ] Data Augmentation
 - [ ] Train on VOC (in progress)
 - [ ] Evaluate Results
