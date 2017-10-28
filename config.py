@@ -1,3 +1,5 @@
+import os
+
 # BASE_CNN_CONFIG
 ARCHITECTURE = 'resnet'
 REQUIRES_GRAD = False
@@ -23,13 +25,16 @@ NUM_CLASSES = 21
 
 # TRAINING CONFIG
 DATA_PATH = '/home/austin/data/VOC/VOC2007/'
+RESUME_EPOCH = 0
+RESUME_PATH = None
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 SCALE = 300
 NUM_EPOCHS = 5
-LEARNING_RATE = 1e-4  # 240 epochs 240k iters
-SHUFFLE = False
+LEARNING_RATE = 3e-5  # 240 epochs 240k iters
+SHUFFLE = True
 CUDA = True  # would we ever tain this without cuda?
 CLF_LOSS_WEIGHT = 10.
-WEIGHT_DIR = './weights'
-EXP_NAME = 'EXP1'
+EXP_NAME = 'EXP2'
+WEIGHT_DIR = os.path.join('weights', EXP_NAME)
+

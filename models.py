@@ -10,6 +10,7 @@ from utils import (bbox_transform_inv, bbox_transform,
 
 
 class BaseCNN(nn.Module):
+    # TODO  finetune last x layers
     def __init__(self, architecture='resnet', requires_grad=False):
         super(BaseCNN, self).__init__()
         if architecture is 'vgg':
@@ -18,8 +19,9 @@ class BaseCNN(nn.Module):
         else:
             resnet = resnet34(pretrained=True)
             self.features = nn.Sequential(*list(resnet.children())[:-3])
+        # freeze all layers
         for param in self.features.parameters():
-            param.requires_grad = requires_grad
+            param.requires_grad = False
 
     def forward(self, x):
         features = self.features(x)
@@ -332,6 +334,16 @@ class FasterRCNN(nn.Module):
         self.proposal_boxes = None
         self.objectness_scores = None
 
+    def forward(self, img):
+        img_features = self.base_cnn(img)
+        # localization
+        rpn_cls_probs, rpn_bbox_deltas = self.rpn(img_features)
+        self.proposal_boxes, self.objectness_scores = self.rpn.get_proposal_boxes(rpn_bbox_deltas,
+                                                                                  rpn_cls_probs)
+
+        pred_label, pred_bbox_deltas = self.classifier(img_features, self.proposal_boxes)
+        return rpn_cls_probs, rpn_bbox_deltas, pred_label, pred_bbox_deltas
+
     def test_mode(self):
         self.base_cnn.eval()
         self.rpn.eval()
@@ -355,14 +367,5 @@ class FasterRCNN(nn.Module):
         return self.rpn.get_rpn_targets(targets)
 
     def get_classifier_targets(self, targets):
-         return self.classifier.get_targets(self.proposal_boxes, targets)
+        return self.classifier.get_targets(self.proposal_boxes, targets)
 
-    def forward(self, img):
-        img_features = self.base_cnn(img)
-        # localization
-        rpn_cls_probs, rpn_bbox_deltas = self.rpn(img_features)
-        self.proposal_boxes, self.objectness_scores = self.rpn.get_proposal_boxes(rpn_bbox_deltas,
-                                                                                  rpn_cls_probs)
-
-        pred_label, pred_bbox_deltas = self.classifier(img_features, self.proposal_boxes)
-        return rpn_cls_probs, rpn_bbox_deltas, pred_label, pred_bbox_deltas

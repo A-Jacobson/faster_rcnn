@@ -1,6 +1,7 @@
-import os
 import warnings
 
+import torch
+from torch.backends import cudnn
 from torch.autograd import Variable
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -11,7 +12,10 @@ from config import *
 from criterion import RPNLoss, FRCNNLoss
 from datasets import PascalVOC
 from models import BaseCNN, RegionProposalNetwork, Classifier, FasterRCNN
-from utils import AverageMeter, save_checkpoint
+from utils import AverageMeter, save_checkpoint, bbox_transform_inv
+from visualize import plot_with_targets
+
+cudnn.benchmark = True
 
 warnings.filterwarnings("error")
 
@@ -28,6 +32,11 @@ frcnn = FasterRCNN(base_cnn, rpn, classifier)
 frcnn.cuda()
 optimizer = Adam(filter(lambda p: p.requires_grad, frcnn.parameters()), lr=LEARNING_RATE)
 
+if RESUME_PATH:
+    experiment = torch.load(RESUME_PATH)
+    frcnn.load_state_dict(experiment['model_state'])
+    optimizer.load_state_dict(experiment['optimizer_state'])
+
 criterion1 = RPNLoss(REG_LOSS_WEIGHT)
 criterion2 = FRCNNLoss(REG_LOSS_WEIGHT)
 
@@ -41,8 +50,10 @@ for epoch in range(NUM_EPOCHS):
         target = target.squeeze(0).numpy()
         rpn_cls_probs, rpn_bbox_deltas, pred_label, pred_bbox_deltas = frcnn(image)
         proposal_boxes, _ = frcnn.get_rpn_proposals()
+
         if len(proposal_boxes) == 0:
             continue
+
         rpn_labels, rpn_bbox_targets, rpn_batch_indices = frcnn.get_rpn_targets(target)
         classifier_labels, delta_boxes, clf_batch_indices = frcnn.get_classifier_targets(target)
         rpn_loss = criterion1(rpn_cls_probs, rpn_bbox_deltas, Variable(rpn_labels).cuda(),
@@ -62,7 +73,18 @@ for epoch in range(NUM_EPOCHS):
         optimizer.step()
 
     # checkpoint
+    if not os.path.exists(WEIGHT_DIR):
+        os.mkdir(WEIGHT_DIR)
     save_checkpoint(frcnn.state_dict(),
                     optimizer.state_dict(),
-                    os.path.join(WEIGHT_DIR, "{}_{}_{:.4f}".format(EXP_NAME, epoch,
-                                                                   loss_meter.avg)))
+                    os.path.join(WEIGHT_DIR, "{}_{:.2f}_{:.4f}".format(epoch+1+RESUME_EPOCH,
+                                                                       LEARNING_RATE, loss_meter.avg)))
+    # idx = 1
+    # img, targets = voc_dataset[idx]
+    # rpn_cls_probs, rpn_bbox_deltas, pred_label, pred_bbox_deltas = frcnn(Variable(img).unsqueeze(0))
+    # proposal_boxes, _ = frcnn.get_rpn_proposals()
+    # class_boxes = bbox_transform_inv(proposal_boxes, pred_bbox_deltas)
+    #
+    # plot_with_targets(img, targets)
+    # plot_with_targets(img, proposal_boxes)
+    # plot_with_targets(img, class_boxes)
