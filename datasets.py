@@ -1,9 +1,10 @@
 import os
-import numpy as np
 
+import numpy as np
+from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset
-from PIL import Image
+
 from utils import scale_targets, convert_wh_bbox
 
 
@@ -20,7 +21,7 @@ class PascalVOC(Dataset):
 
     def __init__(self, root, transform=None):
         self.root = os.path.join(root, 'JPEGImages')
-        self.coco = COCO(os.path.join(root,"pascal_train2007.json"))
+        self.coco = COCO(os.path.join(root, "pascal_train2007.json"))
         self.ids = list(self.coco.imgs.keys())
         self.transform = transform
         self.classes = {0: 'background',
@@ -74,7 +75,7 @@ class PascalVOC(Dataset):
         original_dims = img.size
         if self.transform is not None:
             img = self.transform(img)
-            scaled_dims = img.size()[2], img.size()[1] # 3, H, W
+            scaled_dims = img.size()[2], img.size()[1]  # 3, H, W
             target = scale_targets(target, original_dims, scaled_dims)
         return img, target
 

@@ -13,7 +13,9 @@
 - [x] Backward pass
 - [x] refactor frcnn into one object
 - [x] remove label dependency to generate boxes
-- [ ] Resnet Features (memory savings?)
+- [x] Resnet34 Features (memory savings?)
+- [ ] Train 100 epochs at scale (300) - in-progress
+- [ ] MAP functions
 - [ ] Data Augmentation
 - [ ] Train on VOC (in progress)
 - [ ] Evaluate Results

@@ -2,38 +2,43 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torchvision.models import vgg16_bn
+from torchvision.models import vgg16_bn, resnet34
 
 from anchors import generate_anchors
-from utils import (bbox_transform_inv, get_overlaps,
-                   bbox_transform, clip_boxes,
-                   filter_boxes, non_max_suppression)
-
-
-# from utils import boxes_to_numpy, get_output_dim, classes_to_numpy
+from utils import (bbox_transform_inv, bbox_transform,
+                   get_overlaps, filter_cross_boundary_boxes, non_max_suppression)
 
 
 class BaseCNN(nn.Module):
-    # TODO: ADD RESNET OPTION
-    def __init__(self, requires_grad=False):
+    def __init__(self, architecture='resnet', requires_grad=False):
         super(BaseCNN, self).__init__()
-        vgg_full = vgg16_bn(pretrained=True)
-        for param in vgg_full.parameters():
+        if architecture is 'vgg':
+            vgg_full = vgg16_bn(pretrained=True)
+            self.features = nn.Sequential(*list(vgg_full.features.children())[:-1])
+        else:
+            resnet = resnet34(pretrained=True)
+            self.features = nn.Sequential(*list(resnet.children())[:-3])
+        for param in self.features.parameters():
             param.requires_grad = requires_grad
-        self.vggfeats = nn.Sequential(*list(vgg_full.features.children())[:-1])  # drop last pooling layer
 
     def forward(self, x):
-        return self.vggfeats(x)
+        features = self.features(x)
+        return features
 
 
 class RegionProposalNetwork(nn.Module):
-    def __init__(self, anchor_scales=(128, 256, 512), feat_stride=16,
+    def __init__(self, feature_architecture='resnet', anchor_scales=(128, 256, 512), feat_stride=16,
                  negative_overlap=0.3, positive_overlap=0.7,
                  fg_fraction=0.5, batch_size=128,
                  nms_thresh=0.7, pre_nms_limit=6000,
                  post_nms_limit=2000):
         super(RegionProposalNetwork, self).__init__()
         # Setup
+        if feature_architecture == 'vgg16':
+            input_dims = 512
+        else:
+            input_dims = 256
+
         self.test = False
         self.anchors = generate_anchors(feat_stride=feat_stride, scales=anchor_scales)
         self.num_anchors = self.anchors.shape[0]
@@ -53,7 +58,7 @@ class RegionProposalNetwork(nn.Module):
         self.feature_map_dim = None  # (N, C, H, W)
 
         # layers
-        self.rpn_conv1 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.rpn_conv1 = nn.Conv2d(input_dims, 512, kernel_size=3, padding=1)
         self.conv_classify = nn.Conv2d(512, 2 * 9, kernel_size=1)
         self.conv_bbox_regr = nn.Conv2d(512, 4 * 9, kernel_size=1)
 
@@ -94,11 +99,6 @@ class RegionProposalNetwork(nn.Module):
                        shifts.reshape((1, K, 4)).transpose((1, 0, 2)))
         all_anchors = all_anchors.reshape((K * A, 4))
         return all_anchors
-
-    def filter_anchor_boxes(self, boxes):
-        image_dims = self.feature_map_dim[-2:] * 16
-        anchor_boxes = clip_boxes(boxes, image_dims)
-        return filter_boxes(anchor_boxes, self.min_size)
 
     def get_anchor_box_labels(self, overlaps):
         """
@@ -169,7 +169,6 @@ class RegionProposalNetwork(nn.Module):
             scores (Ndarray) :  ( # proposal boxes, )
         """
         all_anchor_boxes = self.all_anchor_boxes
-        # if test == False, using training args else using testing args
         nms_thresh = self.nms_thresh  # prob thresh
         pre_nms_limit = self.pre_nms_limit
         post_nms_limit = self.post_nms_limit  # eval with different numbers at test
@@ -178,31 +177,37 @@ class RegionProposalNetwork(nn.Module):
         pos_score = rpn_cls_probs.data.cpu().numpy()[:, 1]
 
         # 1. Convert anchors into proposal via bbox transformation
-        proposals_boxes = bbox_transform_inv(all_anchor_boxes,
+        proposal_boxes = bbox_transform_inv(all_anchor_boxes,
                                              rpn_bbox_deltas)  # (H/16 * W/16 * 9, 4) all proposal boxes
 
         height, width = self.feature_map_dim[-2:]
-        # 2. clip proposal boxes to image
+        # 2. ignore out of bounds proposals during training
         if not self.test:
-            proposals_boxes = clip_boxes(proposals_boxes, (height * self.feat_stride, width * self.feat_stride))
+            indices = filter_cross_boundary_boxes(proposal_boxes, (height*16, width*16))
+            proposal_boxes = proposal_boxes[indices]
+            pos_score = pos_score[indices]
+
+        # if no boxes are in the image boundaries, skip
+        if len(proposal_boxes) == 0:
+            return [], []
         # 3. pre nms limit
         limit = np.argsort(pos_score)[:pre_nms_limit]
-        proposals_boxes = proposals_boxes[limit]
+        proposal_boxes = proposal_boxes[limit]
         pos_score = pos_score[limit]
         # 3. apply nms (e.g. threshold = 0.7)
-        proposals_boxes, scores = non_max_suppression(proposals_boxes, pos_score, nms_thresh, post_nms_limit)
-        return proposals_boxes, scores
+        proposal_boxes, scores = non_max_suppression(proposal_boxes, pos_score, nms_thresh, post_nms_limit)
+        return proposal_boxes, scores
 
 
 class ROIPooling(nn.Module):
-    def __init__(self, size=(7, 7), spatial_scale=1. / 16):
+    def __init__(self, size=(7, 7), spatial_scale=16.):
         super(ROIPooling, self).__init__()
         self.adaptivepool = nn.AdaptiveMaxPool2d(size)
         self.spatial_scale = spatial_scale
 
     def forward(self, img_features, proposal_boxes):
         proposal_boxes = proposal_boxes.copy()  # so sneaky roi pooling doesnt scale original proposals
-        proposal_boxes *= self.spatial_scale  # scale anchors to feature map size
+        proposal_boxes /= self.spatial_scale  # scale anchors to feature map size
         proposal_boxes = proposal_boxes.astype('int')
         output = []
         for bbox in proposal_boxes:
@@ -213,11 +218,16 @@ class ROIPooling(nn.Module):
 
 
 class Classifier(nn.Module):
-    def __init__(self, batch_size=128, foreground_fraction=0.25,
+    def __init__(self, feature_architecture='resnet', batch_size=128, foreground_fraction=0.25,
                  foreground_threshold=0.5, background_threshold=0.5,
                  num_classes=21):
         super(Classifier, self).__init__()
         # setup
+        if feature_architecture == 'vgg16':
+            input_dims = 512
+        else:
+            input_dims = 256
+        self.feature_map_dim = None
         self.test = False
         self.batch_size = batch_size
         self.foreground_fraction = foreground_fraction
@@ -230,12 +240,15 @@ class Classifier(nn.Module):
         self.num_background_proposals = None
         self.roi_pool = ROIPooling()
         self.dropout = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(512 * 7 * 7, 4096)
+        self.fc1 = nn.Linear(input_dims * 7 * 7, 4096)
         self.fc2 = nn.Linear(4096, 4096)
         self.out_class = nn.Linear(4096, num_classes)
         self.out_regr = nn.Linear(4096, 4 * num_classes)
 
     def forward(self, img_features, proposal_boxes):
+        if len(proposal_boxes) == 0:
+            return [], []
+        self.feature_map_dim = img_features.size()
         roi_pools = self.roi_pool(img_features, proposal_boxes)
         x = roi_pools.view(roi_pools.size(0), -1)
         x = F.relu(self.fc1(x), True)
@@ -292,6 +305,10 @@ class Classifier(nn.Module):
             bbox_deltas[:, :-1] : (256, 4)
             batch_indices for targets that were sampled
         """
+        if not self.test:
+            height, width = self.feature_map_dim[2:]
+            indices = filter_cross_boundary_boxes(proposal_boxes, (height*16, width*16))
+            proposal_boxes = proposal_boxes[indices]
         targets_batch, proposals_batch, batch_indices = self.foreground_sample(proposal_boxes, targets)
         bbox_deltas = bbox_transform(proposals_batch, targets_batch)
         labels_batch = targets_batch[:, -1]
@@ -324,9 +341,9 @@ class FasterRCNN(nn.Module):
         self.classifier.test = True
 
     def train_mode(self):
-        self.base_cnn.test()
-        self.rpn.test()
-        self.classifier.test()
+        self.base_cnn.train()
+        self.rpn.train()
+        self.classifier.train()
         self.test = False
         self.rpn.test = False
         self.classifier.test = False

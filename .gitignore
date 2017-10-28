@@ -11,3 +11,4 @@
 *.iml
 .cache
 __pycache__/
+weights/*

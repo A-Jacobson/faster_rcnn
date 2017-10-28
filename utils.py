@@ -1,5 +1,8 @@
+from shutil import copyfile
+
 import numpy as np
 import torch
+
 
 def convert_wh_bbox(bbox):
     """
@@ -200,7 +203,7 @@ def bbox_transform(anchor_boxes, target_boxes):
 
     :param anchor_boxes: in x1, y1, x2, y2 format
     :param target_boxes: in x1, y1, x2, y2 format
-    :return:
+    :return: bbox_deltas dx, dy, dw, dh
     """
     anchor_boxes = anchor_boxes.astype(np.float32)
     target_boxes = target_boxes.astype(np.float32)
@@ -231,6 +234,8 @@ def bbox_transform_inv(anchor_boxes, deltas):
     :param deltas: predicted deltas (output from rpn)
     :return: Boxes Predicted by RPN
     """
+    anchor_boxes = anchor_boxes.astype(np.float64)
+    deltas = deltas.astype(np.float64)
 
     widths = anchor_boxes[:, 2] - anchor_boxes[:, 0] + 1.0
     heights = anchor_boxes[:, 3] - anchor_boxes[:, 1] + 1.0
@@ -283,6 +288,15 @@ def filter_boxes(boxes, min_size):
     return boxes[keep]
 
 
+def filter_cross_boundary_boxes(bboxes, image_dims, border=1):
+    indices = np.where(
+        (bboxes[:, 0] >= 0 + border) &
+        (bboxes[:, 1] >= 0 + border) &
+        (bboxes[:, 2] < image_dims[1] - border) &
+        (bboxes[:, 3] < image_dims[0] - border))[0]
+    return indices
+
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
@@ -308,6 +322,7 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
 
 def save_checkpoint(model_state, optimizer_state, filename, epoch=None, is_best=False):
     state = dict(model_state=model_state,
