@@ -1,5 +1,5 @@
 import numpy as np
-
+import torch
 
 def convert_wh_bbox(bbox):
     """
@@ -308,3 +308,11 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+def save_checkpoint(model_state, optimizer_state, filename, epoch=None, is_best=False):
+    state = dict(model_state=model_state,
+                 optimizer_state=optimizer_state,
+                 epoch=epoch)
+    torch.save(state, filename)
+    if is_best:
+        copyfile(filename, 'model_best.pth.tar')

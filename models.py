@@ -27,13 +27,14 @@ class BaseCNN(nn.Module):
 
 
 class RegionProposalNetwork(nn.Module):
-    def __init__(self, anchor_scales=(8, 16, 32), feat_stride=16,
+    def __init__(self, anchor_scales=(128, 256, 512), feat_stride=16,
                  negative_overlap=0.3, positive_overlap=0.7,
                  fg_fraction=0.5, batch_size=128,
                  nms_thresh=0.7, pre_nms_limit=6000,
                  post_nms_limit=2000):
         super(RegionProposalNetwork, self).__init__()
         # Setup
+        self.test = False
         self.anchors = generate_anchors(feat_stride=feat_stride, scales=anchor_scales)
         self.num_anchors = self.anchors.shape[0]
         self.feat_stride = feat_stride  # how much smaller is the feature map than the original image
@@ -50,8 +51,6 @@ class RegionProposalNetwork(nn.Module):
         # for calcing targets
         self.all_anchor_boxes = None
         self.feature_map_dim = None  # (N, C, H, W)
-
-        self.test = False
 
         # layers
         self.rpn_conv1 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
@@ -219,6 +218,7 @@ class Classifier(nn.Module):
                  num_classes=21):
         super(Classifier, self).__init__()
         # setup
+        self.test = False
         self.batch_size = batch_size
         self.foreground_fraction = foreground_fraction
         self.foreground_threshold = foreground_threshold
@@ -228,14 +228,12 @@ class Classifier(nn.Module):
         self.num_images = 1
         self.num_foregound_proposals = None
         self.num_background_proposals = None
-
-        # layers
         self.roi_pool = ROIPooling()
         self.dropout = nn.Dropout(0.5)
         self.fc1 = nn.Linear(512 * 7 * 7, 4096)
-        self.fc2 = nn.Linear(4096, 2048)
-        self.out_class = nn.Linear(2048, num_classes)
-        self.out_regr = nn.Linear(2048, 4 * num_classes)
+        self.fc2 = nn.Linear(4096, 4096)
+        self.out_class = nn.Linear(4096, num_classes)
+        self.out_regr = nn.Linear(4096, 4 * num_classes)
 
     def forward(self, img_features, proposal_boxes):
         roi_pools = self.roi_pool(img_features, proposal_boxes)
@@ -304,18 +302,34 @@ class Classifier(nn.Module):
 
 
 class FasterRCNN(nn.Module):
-    def __init__(self, base_cnn, rpn, classifier, test=False):
+    def __init__(self, base_cnn, rpn, classifier):
         super(FasterRCNN, self).__init__()
         self.base_cnn = base_cnn
         self.rpn = rpn
         self.classifier = classifier
 
         # config
-        self.test = test
+        self.test = False
 
         # targets
         self.proposal_boxes = None
         self.objectness_scores = None
+
+    def test_mode(self):
+        self.base_cnn.eval()
+        self.rpn.eval()
+        self.classifier.eval()
+        self.test = True
+        self.rpn.test = True
+        self.classifier.test = True
+
+    def train_mode(self):
+        self.base_cnn.test()
+        self.rpn.test()
+        self.classifier.test()
+        self.test = False
+        self.rpn.test = False
+        self.classifier.test = False
 
     def get_rpn_proposals(self):
         return self.proposal_boxes, self.objectness_scores
@@ -332,7 +346,6 @@ class FasterRCNN(nn.Module):
         rpn_cls_probs, rpn_bbox_deltas = self.rpn(img_features)
         self.proposal_boxes, self.objectness_scores = self.rpn.get_proposal_boxes(rpn_bbox_deltas,
                                                                                   rpn_cls_probs)
-        # if self.sampled_roi_boxes.shape[0] == 0:
-        #     return None, None, None, None, True
+
         pred_label, pred_bbox_deltas = self.classifier(img_features, self.proposal_boxes)
         return rpn_cls_probs, rpn_bbox_deltas, pred_label, pred_bbox_deltas
