@@ -25,18 +25,20 @@ NUM_CLASSES = 21
 
 # TRAINING CONFIG
 DATA_PATH = '/home/austin/data/VOC/VOC2007/'
-RESUME_PATH = None
-RESUME_EPOCH = int(RESUME_PATH.split('/')[-1][0]) if RESUME_PATH else 0
-LIMIT = None
+RESUME_PATH = 'weights/EXP5/900_1.0e-05_0.8168.pt'
+RESUME_EPOCH = int(RESUME_PATH.split('/')[-1].split('_')[0]) if RESUME_PATH else 0
+LIMIT = 10
+TEST_IMG_IDX = 9
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 SCALE = 300
-NUM_EPOCHS = 8
+NUM_EPOCHS = 100
 LEARNING_RATE = 1e-5  # 240 epochs 240k iters
+CHECKPOINT_RATE = 50
 # MOMENTUM = 0.9
 SHUFFLE = True
 CUDA = True  # would we ever tain this without cuda?
 CLF_LOSS_WEIGHT = 10.
-EXP_NAME = 'EXP3'
+EXP_NAME = 'EXP5'
 WEIGHT_DIR = os.path.join('weights', EXP_NAME)
 

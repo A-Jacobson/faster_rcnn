@@ -15,12 +15,9 @@ from models import BaseCNN, RegionProposalNetwork, Detector, FasterRCNN
 from utils import AverageMeter, save_checkpoint
 from visualize import plot_with_targets, recover_imagenet
 
-TEST_IMG_IDX = 3
 
 if not os.path.exists(WEIGHT_DIR):
     os.mkdir(WEIGHT_DIR)
-
-cudnn.benchmark = True
 
 transform = transforms.Compose([transforms.Scale(SCALE),
                                 transforms.ToTensor(),
@@ -45,6 +42,7 @@ frcnn.cuda()
 
 criterion1 = RPNLoss(REG_LOSS_WEIGHT)
 criterion2 = FRCNNLoss(REG_LOSS_WEIGHT)
+gc.collect()
 
 
 def train(model, num_epochs, resume_epoch):
@@ -54,7 +52,6 @@ def train(model, num_epochs, resume_epoch):
     for epoch in tqdm(range(num_epochs), total=num_epochs):
         pbar = tqdm(voc_loader, total=len(voc_loader), leave=True)
         for image, target in pbar:
-            gc.collect()
             image = Variable(image).cuda(async=True)
             target = target.squeeze(0).numpy()
             rpn_cls_probs, rpn_bbox_deltas, pred_label, pred_bbox_deltas = frcnn(image)
@@ -85,7 +82,7 @@ def train(model, num_epochs, resume_epoch):
             total_loss.backward()
             optimizer.step()
 
-        if (epoch + 1) % 2 == 0:
+        if (epoch + 1) % CHECKPOINT_RATE == 0:
             save_checkpoint(frcnn.state_dict(),
                             optimizer.state_dict(),
                             os.path.join(WEIGHT_DIR, "{}_{:.1e}_{:.4f}.pt".format(epoch + 1 + resume_epoch,
@@ -95,11 +92,9 @@ def train(model, num_epochs, resume_epoch):
         rpn_meter.reset()
         frcnn_meter.reset()
 
-        # checkpoint
-
 
 train(frcnn, NUM_EPOCHS, RESUME_EPOCH)
 test_img, test_target = voc_dataset[TEST_IMG_IDX]
-plot_with_targets(recover_imagenet(test_img), test_target)
+plot_with_targets(recover_imagenet(test_img), test_target, voc_dataset.classes)
 pred_targets = frcnn.get_predictions(Variable(test_img.unsqueeze(0)).cuda(), ignore_background=True)
-plot_with_targets(recover_imagenet(test_img), pred_targets)
+plot_with_targets(recover_imagenet(test_img), pred_targets, voc_dataset.classes)

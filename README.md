@@ -14,6 +14,7 @@
 - [x] refactor frcnn into one object
 - [x] remove label dependency to generate boxes
 - [x] Resnet34 Features (memory savings?)
+- [ ] clip proposals before detection loss
 - [ ] Train 100 epochs at scale (300) - in-progress
 - [ ] MAP functions
 - [ ] Data Augmentation
