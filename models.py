@@ -10,8 +10,7 @@ from utils import (bbox_transform_inv, bbox_transform,
 
 
 class BaseCNN(nn.Module):
-    # TODO  finetune last x layers
-    def __init__(self, architecture='resnet', requires_grad=False):
+    def __init__(self, architecture='resnet', finetune=True):
         super(BaseCNN, self).__init__()
         if architecture is 'vgg':
             vgg_full = vgg16_bn(pretrained=True)
@@ -19,9 +18,18 @@ class BaseCNN(nn.Module):
         else:
             resnet = resnet34(pretrained=True)
             self.features = nn.Sequential(*list(resnet.children())[:-3])
-        # freeze all layers
+        self.freeze()
+        if finetune:
+            self.finetune()
+
+    def freeze(self):
         for param in self.features.parameters():
             param.requires_grad = False
+
+    def finetune(self):
+        self.freeze()
+        for param in self.features[-1].parameters():  # finetune only last layer
+            param.requires_grad = True
 
     def forward(self, x):
         features = self.features(x)
@@ -180,12 +188,12 @@ class RegionProposalNetwork(nn.Module):
 
         # 1. Convert anchors into proposal via bbox transformation
         proposal_boxes = bbox_transform_inv(all_anchor_boxes,
-                                             rpn_bbox_deltas)  # (H/16 * W/16 * 9, 4) all proposal boxes
+                                            rpn_bbox_deltas)  # (H/16 * W/16 * 9, 4) all proposal boxes
 
         height, width = self.feature_map_dim[-2:]
         # 2. ignore out of bounds proposals during training
         if not self.test:
-            indices = filter_cross_boundary_boxes(proposal_boxes, (height*16, width*16))
+            indices = filter_cross_boundary_boxes(proposal_boxes, (height * 16, width * 16))
             proposal_boxes = proposal_boxes[indices]
             pos_score = pos_score[indices]
 
@@ -219,11 +227,11 @@ class ROIPooling(nn.Module):
         return torch.cat(output, 0)
 
 
-class Classifier(nn.Module):
+class Detector(nn.Module):
     def __init__(self, feature_architecture='resnet', batch_size=128, foreground_fraction=0.25,
                  foreground_threshold=0.5, background_threshold=0.5,
                  num_classes=21):
-        super(Classifier, self).__init__()
+        super(Detector, self).__init__()
         # setup
         if feature_architecture == 'vgg16':
             input_dims = 512
@@ -309,7 +317,7 @@ class Classifier(nn.Module):
         """
         if not self.test:
             height, width = self.feature_map_dim[2:]
-            indices = filter_cross_boundary_boxes(proposal_boxes, (height*16, width*16))
+            indices = filter_cross_boundary_boxes(proposal_boxes, (height * 16, width * 16))
             proposal_boxes = proposal_boxes[indices]
         targets_batch, proposals_batch, batch_indices = self.foreground_sample(proposal_boxes, targets)
         bbox_deltas = bbox_transform(proposals_batch, targets_batch)
@@ -321,11 +329,12 @@ class Classifier(nn.Module):
 
 
 class FasterRCNN(nn.Module):
-    def __init__(self, base_cnn, rpn, classifier):
+    # TODO pass settings directly to fasterrcnn (kwargs) instead of initializing seperate models
+    def __init__(self, basecnn, rpn, detector):
         super(FasterRCNN, self).__init__()
-        self.base_cnn = base_cnn
+        self.basecnn = basecnn
         self.rpn = rpn
-        self.classifier = classifier
+        self.detector = detector
 
         # config
         self.test = False
@@ -335,37 +344,79 @@ class FasterRCNN(nn.Module):
         self.objectness_scores = None
 
     def forward(self, img):
-        img_features = self.base_cnn(img)
+        img_features = self.basecnn(img)
         # localization
         rpn_cls_probs, rpn_bbox_deltas = self.rpn(img_features)
         self.proposal_boxes, self.objectness_scores = self.rpn.get_proposal_boxes(rpn_bbox_deltas,
                                                                                   rpn_cls_probs)
 
-        pred_label, pred_bbox_deltas = self.classifier(img_features, self.proposal_boxes)
+        pred_label, pred_bbox_deltas = self.detector(img_features, self.proposal_boxes)
         return rpn_cls_probs, rpn_bbox_deltas, pred_label, pred_bbox_deltas
 
+    def get_predictions(self, img, ignore_background=True):
+        """
+        :param img:
+        :return: predicted_targets: (N, x1, y1, x2, y1, C)
+        """
+        rpn_cls_probs, rpn_bbox_deltas, pred_label, pred_bbox_deltas = self.forward(img)
+        proposals, _ = self.get_rpn_proposals()
+        _, pred_class = pred_label.max(dim=1)
+        pred_class = pred_class.cpu().long()
+        pred_bbox_deltas = pred_bbox_deltas.data.cpu()
+        idx = torch.arange(0, len(pred_class)).long()
+        pred_deltas_top_class = pred_bbox_deltas[idx, pred_class.data.long()].numpy()
+        pred_boxes = bbox_transform_inv(proposals, pred_deltas_top_class)
+        pred_targets = np.hstack([pred_boxes, pred_class.data.cpu().numpy().reshape(-1, 1)])
+        if ignore_background:
+            return pred_targets[pred_targets[:, -1] != 0]
+        return pred_targets
+
     def test_mode(self):
-        self.base_cnn.eval()
+        self.basecnn.eval()
         self.rpn.eval()
-        self.classifier.eval()
+        self.detector.eval()
         self.test = True
         self.rpn.test = True
-        self.classifier.test = True
+        self.detector.test = True
 
     def train_mode(self):
-        self.base_cnn.train()
+        self.basecnn.train()
         self.rpn.train()
-        self.classifier.train()
+        self.detector.train()
         self.test = False
         self.rpn.test = False
-        self.classifier.test = False
+        self.detector.test = False
 
     def get_rpn_proposals(self):
+        """
+        applies rpn bbox deltas to anchor boxes to get region proposals.
+        Also filter by non-max suppression and limit to 2k boxes
+        Arguments:
+            rpn_bbox_deltas (Tensor) : (9*fH*fW, 4)
+            rpn_cls_probs (Tensor) : (9*fH*fW,, 2)
+        Return:
+            proposals_boxes (Ndarray) : ( # proposal boxes, 4)
+            scores (Ndarray) :  ( # proposal boxes, )
+        """
         return self.proposal_boxes, self.objectness_scores
 
     def get_rpn_targets(self, targets):
+        """
+        :param targets: (N, x1, y1, x2, y1, C) targets
+        :return: rpn_labels (batch_size, 1), rpn_bbox_targets (batch_size, 4), keep (batch_size)
+        indices at which the batch was sampled)
+        """
         return self.rpn.get_rpn_targets(targets)
 
-    def get_classifier_targets(self, targets):
-        return self.classifier.get_targets(self.proposal_boxes, targets)
+    def get_detector_targets(self, targets):
+        """
+        Arguments:
+            proposal_boxes (Tensor) : (# proposal boxes , 4)
+            targets: (N, 5)
 
+        Return:
+            labels (Ndarray) : (256,)
+            bbox_deltas[:, :-1] : (256, 4)
+            batch_indices for targets that were sampled
+        """
+        return self.detector.get_targets(self.proposal_boxes, targets)

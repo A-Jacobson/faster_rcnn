@@ -33,3 +33,11 @@ def plot_with_targets(img, targets, class_map=None):
         box = create_rect(recover_wh_bbox(target[:4]), color=color)
         plt.gca().add_patch(box)
     plt.show()
+
+
+def recover_imagenet(tensor):
+    mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+    mu = torch.Tensor(mean).view(-1, 1, 1)
+    sigma = torch.Tensor(std).view(-1, 1, 1)
+    return show_img((tensor * sigma + mu).clamp(0, 1))
+

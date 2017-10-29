@@ -19,10 +19,12 @@ class PascalVOC(Dataset):
             target and transforms it.
     """
 
-    def __init__(self, root, transform=None):
+    def __init__(self, root, transform=None, limit=None):
         self.root = os.path.join(root, 'JPEGImages')
         self.coco = COCO(os.path.join(root, "pascal_train2007.json"))
         self.ids = list(self.coco.imgs.keys())
+        if limit:
+            self.ids = self.ids[:limit]
         self.transform = transform
         self.classes = {0: 'background',
                         1: 'aeroplane',
